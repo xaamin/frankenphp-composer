@@ -6,12 +6,18 @@ SERVER_NAME=""
 SERVER_PORT=""
 
 # Ayuda del script
-function mostrar_ayuda {
-  echo "Uso: $0 -n <name> [-u <uid>] [-g <gid>] [-s <server>] [-p <port>] [-v]"
+function help {
+  echo "Usage: $0 -n <name> [-u <uid>] [-g <gid>] [-s <server>] [-p <port>] [-v]"
   exit 1
 }
 
-# Parseo de parámetros
+function verbose {
+  if [ -n "$VERBOSE" ]; then
+    echo "$1"
+  fi
+}
+
+# Parse params
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -n|--name)
@@ -39,7 +45,7 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     -h|--help)
-      mostrar_ayuda
+      help
       ;;
     *)
       break
@@ -55,86 +61,76 @@ export HOST_GID
 export SERVER_NAME
 export SERVER_PORT
 
-IS_TERMINATION_REQUEST=0
+if [ -z "$SERVER_NAME" ] && [ -z "$SERVER_PORT" ]; then
+    echo "👻 Error: Param -s/--server or -p/--port is required to configure the server. $@"
+    help
+fi
 
-for argument in "$@"; do
-  if [ "$argument" = "down" ]; then
-    IS_TERMINATION_REQUEST=1
-    break
-  fi
-done
+if [ -n "$SERVER_NAME" ] && [ -n "$SERVER_PORT" ]; then
+    echo "👻 Error: Param -s/--server and -p/--port are mutually exclusive, pick just one. $@"
+    help
+fi
 
-echo ""
+CADDY_FILE="CaddyFile"
 
-if [ "$IS_TERMINATION_REQUEST" -eq 0 ]; then
-    if [ -z "$SERVER_NAME" ] && [ -z "$SERVER_PORT" ]; then
-        echo "Error: Param -s/--server or -p/--port is required to configure the server. $@"
-        mostrar_ayuda
-    fi
+if [[ "$OSTYPE" == darwin* ]]; then
+    SED_INPLACE=(-i '')
+else
+    SED_INPLACE=(-i)
+fi
 
-    if [ -n "$SERVER_NAME" ] && [ -n "$SERVER_PORT" ]; then
-        echo "Error: Param -s/--server and -p/--port are mutually exclusive, pick just one. $@"
-        mostrar_ayuda
-    fi
+if [ -n "$SERVER_PORT" ]; then
+    sed "${SED_INPLACE[@]}" -E 's|^([[:space:]]*)(tls[[:space:]].*)$|\1# \2|' "$CADDY_FILE"
+    
+    verbose "💡 CaddyFile updated to use port ${SERVER_PORT} instead of TLS."
+else
+    sed "${SED_INPLACE[@]}" -E 's|^([[:space:]]*)#[[:space:]]*(tls[[:space:]].*)$|\1\2|' "$CADDY_FILE"
 
-    CADDY_FILE="CaddyFile"
+    verbose "💡 CaddyFile updated to use auto TLS."
 
-    if [[ "$OSTYPE" == darwin* ]]; then
-        SED_INPLACE=(-i '')
-    else
-        SED_INPLACE=(-i)
-    fi
-
-    if [ -n "$SERVER_PORT" ]; then
-        sed "${SED_INPLACE[@]}" -E 's|^([[:space:]]*)(tls[[:space:]].*)$|\1# \2|' "$CADDY_FILE"
-    else
-        sed "${SED_INPLACE[@]}" -E 's|^([[:space:]]*)#[[:space:]]*(tls[[:space:]].*)$|\1\2|' "$CADDY_FILE"
-
-        if [ "$IS_TERMINATION_REQUEST" -eq 0 ]; then
-            bash ./.caddy/generate-ssl-cert
-        fi
-    fi
+    bash ./.caddy/generate-ssl-cert
 fi
 
 if [ -z "$SERVER_NAME" ] && [ -n "$SERVER_PORT" ]; then
+  verbose "💡 Server port was provided, creating alias for server name to use the port instead."
+
     SERVER_NAME=":${SERVER_PORT}"
 fi
 
 if [ -z "$NAME" ]; then
-    echo "Error: Param -n/--name is required to manage the container name. $@"
-    mostrar_ayuda
+    echo "👻 Error: Param -n/--name is required to manage the container name. $@"
+    help
 fi
 
-if [ -n "$VERBOSE" ]; then
-  echo "Config:"
-  echo "  Container name: $NAME"
-    echo "  Data volume: $DATA_VOLUME"
-    echo "  UID: $HOST_UID"
-    echo "  GID: $HOST_GID"
-    echo "  Domain name: $SERVER_NAME"
-    echo "  Server port: ${SERVER_PORT:-80,443}"
-fi
 
 COMPOSE_FILES=(-f docker-compose.t.yml)
 
-if [ "$IS_TERMINATION_REQUEST" -eq 0 ]; then
-    if [ -n "$SERVER_PORT" ]; then
-        PORT_OVERRIDE_FILE=$(mktemp)
+if [ -n "$SERVER_PORT" ]; then
+    PORT_OVERRIDE_FILE=$(mktemp)
 
-        trap 'rm -f "$PORT_OVERRIDE_FILE"' EXIT
-            
-        printf '%s\n' \
-            'services:' \
-            '  php:' \
-            '    ports: !override' \
-            "      - \"${SERVER_PORT}:${SERVER_PORT}\"" \
-            "      - \"${SERVER_PORT}:${SERVER_PORT}/udp\"" > "$PORT_OVERRIDE_FILE"
+    trap 'rm -f "$PORT_OVERRIDE_FILE"' EXIT
+        
+    printf '%s\n' \
+        'services:' \
+        '  php:' \
+        '    ports: !override' \
+        "      - \"${SERVER_PORT}:${SERVER_PORT}\"" \
+        "      - \"${SERVER_PORT}:${SERVER_PORT}/udp\"" > "$PORT_OVERRIDE_FILE"
 
-        COMPOSE_FILES+=(-f "$PORT_OVERRIDE_FILE")
-    fi
+    COMPOSE_FILES+=(-f "$PORT_OVERRIDE_FILE")
+
+    verbose "💡 Docker Compose override file created at: $PORT_OVERRIDE_FILE"
 fi
+
+echo "👀 Config:"
+echo "  Container name: $NAME"
+echo "  Data volume: $DATA_VOLUME"
+echo "  UID: $HOST_UID"
+echo "  GID: $HOST_GID"
+echo "  Domain name: $SERVER_NAME"
+echo "  Server port: ${SERVER_PORT:-80,443}"
 
 docker compose "${COMPOSE_FILES[@]}" config > docker-compose.yml
 
 echo ""
-echo "To start the container, run: docker compose up -d"
+echo "🌐 To start the container, run: docker compose up -d"
