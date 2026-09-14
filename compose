@@ -1,0 +1,140 @@
+NAME=""
+DATA_VOLUME="$(pwd)"
+HOST_UID=$(id -u)
+HOST_GID=$(id -g)
+SERVER_NAME=""
+SERVER_PORT=""
+
+# Ayuda del script
+function mostrar_ayuda {
+  echo "Uso: $0 -n <name> [-u <uid>] [-g <gid>] [-s <server>] [-p <port>] [-v]"
+  exit 1
+}
+
+# Parseo de parámetros
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -n|--name)
+      NAME="$2"
+      shift 2
+      ;;
+    -u|--uid)
+      HOST_UID="$2"
+      shift 2
+      ;;
+    -g|--gid)
+      HOST_GID="$2"
+      shift 2
+      ;;
+    -s|--server)
+      SERVER_NAME="$2"
+      shift 2
+      ;;
+    -p|--port)
+      SERVER_PORT="$2"
+      shift 2
+      ;;
+    -v|--verbose)
+      VERBOSE=1
+      shift
+      ;;
+    -h|--help)
+      mostrar_ayuda
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+export NAME
+export DATA_VOLUME
+export FILE
+export HOST_UID
+export HOST_GID
+export SERVER_NAME
+export SERVER_PORT
+
+IS_TERMINATION_REQUEST=0
+
+for argument in "$@"; do
+  if [ "$argument" = "down" ]; then
+    IS_TERMINATION_REQUEST=1
+    break
+  fi
+done
+
+echo ""
+
+if [ "$IS_TERMINATION_REQUEST" -eq 0 ]; then
+    if [ -z "$SERVER_NAME" ] && [ -z "$SERVER_PORT" ]; then
+        echo "Error: Param -s/--server or -p/--port is required to configure the server. $@"
+        mostrar_ayuda
+    fi
+
+    if [ -n "$SERVER_NAME" ] && [ -n "$SERVER_PORT" ]; then
+        echo "Error: Param -s/--server and -p/--port are mutually exclusive, pick just one. $@"
+        mostrar_ayuda
+    fi
+
+    CADDY_FILE="CaddyFile"
+
+    if [[ "$OSTYPE" == darwin* ]]; then
+        SED_INPLACE=(-i '')
+    else
+        SED_INPLACE=(-i)
+    fi
+
+    if [ -n "$SERVER_PORT" ]; then
+        sed "${SED_INPLACE[@]}" -E 's|^([[:space:]]*)(tls[[:space:]].*)$|\1# \2|' "$CADDY_FILE"
+    else
+        sed "${SED_INPLACE[@]}" -E 's|^([[:space:]]*)#[[:space:]]*(tls[[:space:]].*)$|\1\2|' "$CADDY_FILE"
+
+        if [ "$IS_TERMINATION_REQUEST" -eq 0 ]; then
+            bash ./.caddy/generate-ssl-cert
+        fi
+    fi
+fi
+
+if [ -z "$SERVER_NAME" ] && [ -n "$SERVER_PORT" ]; then
+    SERVER_NAME=":${SERVER_PORT}"
+fi
+
+if [ -z "$NAME" ]; then
+    echo "Error: Param -n/--name is required to manage the container name. $@"
+    mostrar_ayuda
+fi
+
+if [ -n "$VERBOSE" ]; then
+  echo "Config:"
+  echo "  Container name: $NAME"
+    echo "  Data volume: $DATA_VOLUME"
+    echo "  UID: $HOST_UID"
+    echo "  GID: $HOST_GID"
+    echo "  Domain name: $SERVER_NAME"
+    echo "  Server port: ${SERVER_PORT:-80,443}"
+fi
+
+COMPOSE_FILES=(-f docker-compose.t.yml)
+
+if [ "$IS_TERMINATION_REQUEST" -eq 0 ]; then
+    if [ -n "$SERVER_PORT" ]; then
+        PORT_OVERRIDE_FILE=$(mktemp)
+
+        trap 'rm -f "$PORT_OVERRIDE_FILE"' EXIT
+            
+        printf '%s\n' \
+            'services:' \
+            '  php:' \
+            '    ports: !override' \
+            "      - \"${SERVER_PORT}:${SERVER_PORT}\"" \
+            "      - \"${SERVER_PORT}:${SERVER_PORT}/udp\"" > "$PORT_OVERRIDE_FILE"
+
+        COMPOSE_FILES+=(-f "$PORT_OVERRIDE_FILE")
+    fi
+fi
+
+docker compose "${COMPOSE_FILES[@]}" config > docker-compose.yml
+
+echo ""
+echo "To start the container, run: docker compose up -d"

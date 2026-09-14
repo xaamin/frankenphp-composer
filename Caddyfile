@@ -1,0 +1,15 @@
+# This block handles your website
+{$SERVER_NAME} {
+    # Set the root folder to your custom directory's public folder
+    root * {$DATA_VOLUME}/public
+
+    tls /etc/caddy/certs/{$NAME}.pem /etc/caddy/certs/{$NAME}-key.pem
+    
+    # Enable the FrankenPHP engine to process PHP files
+    php_server
+    
+    # Enable standard Caddy features (compress files, handle static assets, etc.)
+    encode zstd gzip
+
+    file_server
+}

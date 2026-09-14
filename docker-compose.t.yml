@@ -1,0 +1,31 @@
+services:
+  php:
+    image: dunglas/frankenphp:1-php8.4
+    container_name: ${NAME:-frankenphp}
+    # Force the container to run as your local user & group ID
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    # Change the default container working directory
+    working_dir: ${DATA_VOLUME}
+    volumes:
+      # 1. Your application code mapped to the custom path
+      - .:${DATA_VOLUME}
+      
+      # 2. Bind mounts to keep SSL certs and config visible in your project root
+      - ./.caddy/data:/data
+      - ./.caddy/config:/config
+      
+      # 3. Mount your custom site configuration file directly into Caddy
+      - ./Caddyfile:/etc/frankenphp/Caddyfile
+
+      # 4. Mount the generated SSL certs into the container
+      - ./.caddy/certs:/etc/caddy/certs:ro
+    environment:
+      # Pass the variables into the container environment so Caddy can use it
+      - DATA_VOLUME=${DATA_VOLUME}
+      - SERVER_NAME=${SERVER_NAME}
+      - NAME=${NAME}
+    restart: unless-stopped
