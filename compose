@@ -62,64 +62,63 @@ export SERVER_NAME
 export SERVER_PORT
 
 if [ -z "$SERVER_NAME" ] && [ -z "$SERVER_PORT" ]; then
-    echo "👻 Error: Param -s/--server or -p/--port is required to configure the server. $@"
-    help
+  echo "👻 Error: Param -s/--server or -p/--port is required to configure the server. $@"
+  help
 fi
 
 if [ -n "$SERVER_NAME" ] && [ -n "$SERVER_PORT" ]; then
-    echo "👻 Error: Param -s/--server and -p/--port are mutually exclusive, pick just one. $@"
-    help
+  echo "👻 Error: Param -s/--server and -p/--port are mutually exclusive, pick just one. $@"
+  help
 fi
 
 CADDY_FILE="CaddyFile"
 
 if [[ "$OSTYPE" == darwin* ]]; then
-    SED_INPLACE=(-i '')
+  SED_INPLACE=(-i '')
 else
-    SED_INPLACE=(-i)
+  SED_INPLACE=(-i)
 fi
 
 if [ -n "$SERVER_PORT" ]; then
-    sed "${SED_INPLACE[@]}" -E 's|^([[:space:]]*)(tls[[:space:]].*)$|\1# \2|' "$CADDY_FILE"
+  sed "${SED_INPLACE[@]}" -E 's|^([[:space:]]*)(tls[[:space:]].*)$|\1# \2|' "$CADDY_FILE"
     
-    verbose "💡 CaddyFile updated to use port ${SERVER_PORT} instead of TLS."
+  verbose "💡 CaddyFile updated to use port ${SERVER_PORT} instead of TLS."
 else
-    sed "${SED_INPLACE[@]}" -E 's|^([[:space:]]*)#[[:space:]]*(tls[[:space:]].*)$|\1\2|' "$CADDY_FILE"
+  sed "${SED_INPLACE[@]}" -E 's|^([[:space:]]*)#[[:space:]]*(tls[[:space:]].*)$|\1\2|' "$CADDY_FILE"
 
-    verbose "💡 CaddyFile updated to use auto TLS."
+  verbose "💡 CaddyFile updated to use auto TLS."
 
-    bash ./.caddy/generate-ssl-cert
+  bash ./.caddy/generate-ssl-cert
 fi
 
 if [ -z "$SERVER_NAME" ] && [ -n "$SERVER_PORT" ]; then
   verbose "💡 Server port was provided, creating alias for server name to use the port instead."
 
-    SERVER_NAME=":${SERVER_PORT}"
+  SERVER_NAME=":${SERVER_PORT}"
 fi
 
 if [ -z "$NAME" ]; then
-    echo "👻 Error: Param -n/--name is required to manage the container name. $@"
-    help
+  echo "👻 Error: Param -n/--name is required to manage the container name. $@"
+  help
 fi
-
 
 COMPOSE_FILES=(-f docker-compose.t.yml)
 
 if [ -n "$SERVER_PORT" ]; then
-    PORT_OVERRIDE_FILE=$(mktemp)
+  PORT_OVERRIDE_FILE=$(mktemp)
 
-    trap 'rm -f "$PORT_OVERRIDE_FILE"' EXIT
-        
-    printf '%s\n' \
-        'services:' \
-        '  php:' \
-        '    ports: !override' \
-        "      - \"${SERVER_PORT}:${SERVER_PORT}\"" \
-        "      - \"${SERVER_PORT}:${SERVER_PORT}/udp\"" > "$PORT_OVERRIDE_FILE"
+  trap 'rm -f "$PORT_OVERRIDE_FILE"' EXIT
 
-    COMPOSE_FILES+=(-f "$PORT_OVERRIDE_FILE")
+  printf '%s\n' \
+    'services:' \
+    '  php:' \
+    '    ports: !override' \
+    "      - \"${SERVER_PORT}:${SERVER_PORT}\"" \
+    "      - \"${SERVER_PORT}:${SERVER_PORT}/udp\"" > "$PORT_OVERRIDE_FILE"
 
-    verbose "💡 Docker Compose override file created at: $PORT_OVERRIDE_FILE"
+  COMPOSE_FILES+=(-f "$PORT_OVERRIDE_FILE")
+
+  verbose "💡 Docker Compose override file created at: $PORT_OVERRIDE_FILE"
 fi
 
 echo "👀 Config:"
