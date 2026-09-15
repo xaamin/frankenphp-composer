@@ -5,7 +5,7 @@ if ! which mkcert > /dev/null 2>&1; then
     if [[ "$OSTYPE" == darwin* ]]; then
         yes | brew install mkcert nss
     else
-        sudo apt install certutil libnss3-tools -y
+        sudo apt install libnss3-tools -y
 
         sudo wget -O /usr/local/bin/mkcert https://dl.filippo.io/mkcert/latest?for=linux/amd64
 
