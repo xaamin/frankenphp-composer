@@ -71,7 +71,7 @@ if [ -n "$SERVER_NAME" ] && [ -n "$SERVER_PORT" ]; then
   help
 fi
 
-CADDY_FILE="CaddyFile"
+CADDY_FILE="Caddyfile"
 
 if [[ "$OSTYPE" == darwin* ]]; then
   SED_INPLACE=(-i '')
@@ -82,11 +82,11 @@ fi
 if [ -n "$SERVER_PORT" ]; then
   sed "${SED_INPLACE[@]}" -E 's|^([[:space:]]*)(tls[[:space:]].*)$|\1# \2|' "$CADDY_FILE"
     
-  verbose "💡 CaddyFile updated to use port ${SERVER_PORT} instead of TLS."
+  verbose "💡 Caddyfile updated to use port ${SERVER_PORT} instead of TLS."
 else
   sed "${SED_INPLACE[@]}" -E 's|^([[:space:]]*)#[[:space:]]*(tls[[:space:]].*)$|\1\2|' "$CADDY_FILE"
 
-  verbose "💡 CaddyFile updated to use auto TLS."
+  verbose "💡 Caddyfile updated to use auto TLS."
 
   bash ./.caddy/generate-ssl-cert
 fi
