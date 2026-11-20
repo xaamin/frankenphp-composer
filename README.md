@@ -17,7 +17,7 @@ curl -fsSL https://raw.githubusercontent.com/xaamin/frankenphp-composer/refs/hea
 bash bash/dockerize
 ```
 
-It downloads `.caddy/.gitignore`, `Caddyfile`, `Dockerfile.template`, `docker-compose.template.yml`, `bash/compose` and `bash/reload` into the project and prints the usage examples. If the project has no `deploy.yml`, it also creates one from [`deploy.template.yml`](deploy.template.yml), a sample Deployer config to fill in; an existing `deploy.yml` is never overwritten. Keep `bash/dockerize` in your project and re-run it to update those files to the latest version. It overwrites them, including any manual edits to `Caddyfile` and `Dockerfile.template`. Requires `curl`.
+It downloads `.caddy/.gitignore`, `Caddyfile`, `Dockerfile.template`, `docker-compose.template.yml`, `bash/compose` and `bash/reload` into the project and prints the usage examples. If the project has no `deploy.yml`, it also creates one from [`deploy.template.yml`](deploy.template.yml), a sample Deployer config to fill in; an existing `deploy.yml` is never overwritten. If the project has a `.env`, it appends the settings from [`.env.example`](.env.example) (`PHP_VERSION`, `COMPOSE_PROJECT_NAME`) that it doesn't define yet, with their comments, under a `# frankenphp-composer` heading; existing values are kept, and no `.env` is created if there isn't one. Keep `bash/dockerize` in your project and re-run it to update those files to the latest version. It overwrites them, including any manual edits to `Caddyfile` and `Dockerfile.template`. Requires `curl`.
 
 ### Upgrading from older versions
 

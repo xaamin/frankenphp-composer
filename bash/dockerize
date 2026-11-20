@@ -32,6 +32,62 @@ echo "✅ Compose files downloaded."
 
 chmod +x ./bash/compose ./bash/reload
 
+# Add the frankenphp-composer settings (PHP_VERSION, COMPOSE_PROJECT_NAME, ...) that the
+# project's .env doesn't define yet, with their comments. Existing values are kept.
+if [ -f .env ]; then
+  ENV_EXAMPLE=$(mktemp)
+  trap 'rm -f "$ENV_EXAMPLE"' EXIT
+
+  if ! curl -fsSL "${BASE_URL}/.env.example" -o "$ENV_EXAMPLE"; then
+    echo "👻 Error: Could not download .env.example."
+    exit 1
+  fi
+
+  # Each variable comes with the comment lines right above it; a blank line resets them
+  MISSING_ENV=$(awk '
+    NR == FNR {
+      if (match($0, /^[[:space:]]*(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=/)) {
+        name = substr($0, RSTART, RLENGTH - 1)
+        sub(/^[[:space:]]*(export[[:space:]]+)?/, "", name)
+        sub(/[[:space:]]+$/, "", name)
+        defined[name] = 1
+      }
+      next
+    }
+    /^[[:space:]]*$/ { comments = ""; next }
+    /^[[:space:]]*#/ { comments = comments $0 "\n"; next }
+    match($0, /^[A-Za-z_][A-Za-z0-9_]*=/) {
+      name = substr($0, 1, RLENGTH - 1)
+      if (!(name in defined)) {
+        printf "\n%s%s\n", comments, $0
+        added = added " " name
+      }
+      comments = ""
+    }
+    END { if (added != "") print "#ADDED" added }
+  ' .env "$ENV_EXAMPLE")
+
+  ADDED_ENV=$(printf '%s\n' "$MISSING_ENV" | sed -n 's/^#ADDED //p')
+
+  if [ -n "$ADDED_ENV" ]; then
+    # Make sure the appended block starts on its own line
+    if [ -s .env ] && [ -n "$(tail -c 1 .env)" ]; then
+      echo "" >> .env
+    fi
+
+    printf '\n# frankenphp-composer\n' >> .env
+    printf '%s\n' "$MISSING_ENV" | sed '/^#ADDED /d' | sed '1{/^$/d;}' >> .env
+
+    echo "📝 Added to .env: ${ADDED_ENV// /, }"
+  else
+    echo "💡 .env already has every frankenphp-composer setting."
+  fi
+
+  echo "⚙️  Customize PHP_VERSION and COMPOSE_PROJECT_NAME in .env as per your needs (e.g. PHP_VERSION=8.4), then re-run bash/compose."
+else
+  echo "⚙️  No .env found: add PHP_VERSION and COMPOSE_PROJECT_NAME to your .env as per your needs (see ${BASE_URL}/.env.example)."
+fi
+
 # Sample Deployer config: only created when the project doesn't have a deploy.yml yet,
 # so an existing one (with your hosts and tasks) is never overwritten.
 if [ -f deploy.yml ]; then
