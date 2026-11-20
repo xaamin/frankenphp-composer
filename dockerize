@@ -1,0 +1,40 @@
+#!/bin/bash
+
+# Downloads the frankenphp-composer files into the current project.
+# Re-run it to update them to the latest version.
+
+set -euo pipefail
+
+BASE_URL="https://raw.githubusercontent.com/xaamin/frankenphp-composer/refs/heads/master"
+
+FILES=(
+  .caddy/.gitignore
+  Caddyfile
+  compose
+  docker-compose.t.yml
+)
+
+mkdir -p ./.caddy
+
+for FILE in "${FILES[@]}"; do
+  if ! curl -fsSL "${BASE_URL}/${FILE}" -o "./${FILE}"; then
+    echo "👻 Error: Could not download ${FILE}."
+    exit 1
+  fi
+done
+
+echo "✅ Compose files downloaded."
+echo ""
+echo "🌐 Usage:"
+echo "  Local development (HTTPS, certificate issued by Caddy):"
+echo "      bash compose -n myapp -s myapp.localhost -a"
+echo "  Public domain (HTTPS, certificate issued and renewed by Caddy):"
+echo "      bash compose -n myapp -s example.com -a"
+echo "  Your own certificate (.caddy/certs/myapp.pem and myapp-key.pem):"
+echo "      bash compose -n myapp -s example.com"
+echo "  Behind a reverse proxy (plain HTTP on a port):"
+echo "      bash compose -n myapp -p 8080"
+echo ""
+echo "💡 Replace the domain, port and container name (-n) with your own."
+echo "💡 Set PHP_VERSION in .env to pin a PHP version (default: latest)."
+echo "🌐 Then start the container with: docker compose up -d"
