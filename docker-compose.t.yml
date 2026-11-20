@@ -1,6 +1,7 @@
 services:
   php:
-    image: dunglas/frankenphp:1-php8.4
+    # PHP version is read from PHP_VERSION in the project's .env file
+    image: dunglas/frankenphp:1${PHP_VERSION:+-php}${PHP_VERSION}
     container_name: ${NAME:-frankenphp}
     # Force the container to run as your local user & group ID
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"

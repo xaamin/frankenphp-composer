@@ -4,10 +4,11 @@ HOST_UID=$(id -u)
 HOST_GID=$(id -g)
 SERVER_NAME=""
 SERVER_PORT=""
+AUTO_TLS=""
 
 # Ayuda del script
 function help {
-  echo "Usage: $0 -n <name> [-u <uid>] [-g <gid>] [-s <server>] [-p <port>] [-v]"
+  echo "Usage: $0 -n <name> [-u <uid>] [-g <gid>] [-s <server> [-a]] [-p <port>] [-v]"
   exit 1
 }
 
@@ -40,6 +41,10 @@ while [[ $# -gt 0 ]]; do
       SERVER_PORT="$2"
       shift 2
       ;;
+    -a|--auto)
+      AUTO_TLS=1
+      shift
+      ;;
     -v|--verbose)
       VERBOSE=1
       shift
@@ -61,6 +66,16 @@ export HOST_GID
 export SERVER_NAME
 export SERVER_PORT
 
+# PHP version: shell environment first, then the project's .env file.
+# Empty means the latest PHP version shipped by FrankenPHP.
+if [ -z "$PHP_VERSION" ] && [ -f .env ]; then
+  PHP_VERSION=$(grep -E '^[[:space:]]*PHP_VERSION[[:space:]]*=' .env | tail -n 1 | cut -d= -f2- | tr -d "\"' \r")
+fi
+
+export PHP_VERSION="${PHP_VERSION:-}"
+
+verbose "💡 Using PHP version ${PHP_VERSION:-latest}."
+
 if [ -z "$SERVER_NAME" ] && [ -z "$SERVER_PORT" ]; then
   echo "👻 Error: Param -s/--server or -p/--port is required to configure the server. $@"
   help
@@ -68,6 +83,16 @@ fi
 
 if [ -n "$SERVER_NAME" ] && [ -n "$SERVER_PORT" ]; then
   echo "👻 Error: Param -s/--server and -p/--port are mutually exclusive, pick just one. $@"
+  help
+fi
+
+if [ -n "$AUTO_TLS" ] && [ -z "$SERVER_NAME" ]; then
+  echo "👻 Error: Param -a/--auto requires -s/--server, Caddy needs a domain to issue a certificate for. $@"
+  help
+fi
+
+if [ -z "$NAME" ]; then
+  echo "👻 Error: Param -n/--name is required to manage the container name. $@"
   help
 fi
 
@@ -79,14 +104,34 @@ else
   SED_INPLACE=(-i)
 fi
 
-if [ -n "$SERVER_PORT" ]; then
+if [ -n "$SERVER_PORT" ] || [ -n "$AUTO_TLS" ]; then
+  # Comment the tls line: no TLS in port mode, Caddy-managed certificates in auto mode
   sed "${SED_INPLACE[@]}" -E 's|^([[:space:]]*)(tls[[:space:]].*)$|\1# \2|' "$CADDY_FILE"
-    
-  verbose "💡 Caddyfile updated to use port ${SERVER_PORT} instead of TLS."
+
+  if [ -n "$SERVER_PORT" ]; then
+    TLS_MODE="disabled (plain HTTP on port ${SERVER_PORT})"
+
+    echo "🔓 TLS disabled: serving plain HTTP on port ${SERVER_PORT}."
+  else
+    if [[ "$SERVER_NAME" == "localhost" || "$SERVER_NAME" == *.localhost ]]; then
+      TLS_MODE="auto (certificate issued by Caddy's local CA)"
+
+      echo "🔒 Using auto TLS: Caddy will issue the certificate for ${SERVER_NAME} from its local CA."
+      echo "   Trust .caddy/data/caddy/pki/authorities/local/root.crt on this machine to avoid browser warnings (see README)."
+    else
+      TLS_MODE="auto (certificate issued and renewed by Caddy)"
+
+      echo "🔒 Using auto TLS: Caddy will issue and renew the certificate for ${SERVER_NAME}."
+    fi
+  fi
 else
+  # Uncomment the tls line and generate a locally trusted certificate
   sed "${SED_INPLACE[@]}" -E 's|^([[:space:]]*)#[[:space:]]*(tls[[:space:]].*)$|\1\2|' "$CADDY_FILE"
 
-  verbose "💡 Caddyfile updated to use auto TLS."
+  TLS_MODE="custom (.caddy/certs/${NAME}.pem and ${NAME}-key.pem)"
+
+  echo "🔒 Using custom TLS: .caddy/certs/${NAME}.pem and .caddy/certs/${NAME}-key.pem."
+  echo "   A locally trusted certificate is generated now; replace both files to use a purchased one."
 
   bash ./.caddy/generate-ssl-cert
 fi
@@ -95,11 +140,6 @@ if [ -z "$SERVER_NAME" ] && [ -n "$SERVER_PORT" ]; then
   verbose "💡 Server port was provided, creating alias for server name to use the port instead."
 
   SERVER_NAME=":${SERVER_PORT}"
-fi
-
-if [ -z "$NAME" ]; then
-  echo "👻 Error: Param -n/--name is required to manage the container name. $@"
-  help
 fi
 
 COMPOSE_FILES=(-f docker-compose.t.yml)
@@ -123,11 +163,13 @@ fi
 
 echo "👀 Config:"
 echo "  Container name: $NAME"
+echo "  PHP version: ${PHP_VERSION:-latest}"
 echo "  Data volume: $DATA_VOLUME"
 echo "  UID: $HOST_UID"
 echo "  GID: $HOST_GID"
 echo "  Domain name: $SERVER_NAME"
 echo "  Server port: ${SERVER_PORT:-80,443}"
+echo "  TLS: $TLS_MODE"
 
 docker compose "${COMPOSE_FILES[@]}" config > docker-compose.yml
 

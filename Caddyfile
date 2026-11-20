@@ -1,9 +1,20 @@
+{
+    # The local CA is trusted from the host (see README), not from inside the container
+    skip_install_trust
+
+    servers {
+        # Docker private network or LAN
+        trusted_proxies static private_ranges
+    }
+}
+
 # This block handles your website
 {$SERVER_NAME} {
     # Set the root folder to your custom directory's public folder
     root * {$DATA_VOLUME}/public
 
-    tls /etc/caddy/certs/{$NAME}.pem /etc/caddy/certs/{$NAME}-key.pem
+    # Uncomment if you use your own certificate (e.g. a purchased one). See README.
+    # tls /etc/caddy/certs/{$NAME}.pem /etc/caddy/certs/{$NAME}-key.pem
     
     # Enable the FrankenPHP engine to process PHP files
     php_server
