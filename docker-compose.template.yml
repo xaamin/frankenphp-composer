@@ -1,7 +1,13 @@
 services:
   php:
-    # PHP version is read from PHP_VERSION in the project's .env file
-    image: dunglas/frankenphp:1${PHP_VERSION:+-php}${PHP_VERSION}
+    # Built from the Dockerfile that `compose` renders from Dockerfile.template,
+    # using the PHP version from PHP_VERSION in the project's .env file
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Tagged with a checksum of the Dockerfile: `docker compose up -d` only builds
+    # (and recreates the container) when the Dockerfile changes
+    image: ${COMPOSE_PROJECT_NAME}-php:${IMAGE_TAG}
     container_name: ${NAME:-frankenphp}
     # Force the container to run as your local user & group ID
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
@@ -27,6 +33,8 @@ services:
     environment:
       # Pass the variables into the container environment so Caddy can use it
       - DATA_VOLUME=${DATA_VOLUME}
+      # Folder whose public/ is served; `bash bash/reload` switches it per release
+      - APP_ROOT=${APP_ROOT}
       - SERVER_NAME=${SERVER_NAME}
       - NAME=${NAME}
     restart: unless-stopped

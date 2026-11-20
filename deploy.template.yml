@@ -1,0 +1,74 @@
+# Sample Deployer (https://deployer.org) config for a Laravel app served by
+# frankenphp-composer in Deployer mode (see "Deploying with Deployer" in the README).
+# bash/dockerize saves it as deploy.yml when the project doesn't have one yet.
+# Replace the <placeholders> with your values.
+
+import:
+  - recipe/laravel.php
+  - contrib/npm.php
+
+config:
+  remote_user: <ssh-user>
+  http_user: <ssh-user>
+  identity_file: ~/.ssh/<private-key>
+  writable_mode: chown
+  writable_use_sudo: true
+  writable_recursive: true
+  shared_files:
+    # PHP_VERSION, COMPOSE_PROJECT_NAME and your app settings
+    - .env
+
+hosts:
+  production:
+    hostname: <server-ip-or-host>
+    deploy_path: '~/myapp'
+    branch: main
+    repository: 'git@github.com:<org>/<repo>.git'
+    labels:
+      stage: production
+
+tasks:
+  # Points the running container to the new release (graceful reload, no downtime).
+  # On the first deploy the container doesn't exist yet and this only generates the files.
+  frankenphp:release:
+    - desc: 'Generates the Docker files and points the running container to the new release'
+    - cd: '{{release_path}}'
+    - run: 'bash bash/compose -n myapp -p 8080 -d {{deploy_path}}'
+    - run: 'bash bash/reload'
+
+  # Starts the container the first time, or recreates it when the image changed
+  # (Dockerfile.template or PHP_VERSION). Otherwise it leaves it running.
+  frankenphp:up:
+    - desc: 'Starts the container, or recreates it if the image changed'
+    - cd: '{{current_path}}'
+    - run: 'docker compose up -d'
+
+  # Reloads the running container on the release `current` points to, without
+  # recreating it (in-flight requests finish, new ones use the reloaded config).
+  # Run it manually with `dep frankenphp:reload`; it also runs after `dep rollback`,
+  # because the server is pinned to a release path and would keep serving the
+  # rolled-back release otherwise.
+  frankenphp:reload:
+    - desc: 'Reloads the container on the current release without recreating it'
+    - cd: '{{current_path}}'
+    - run: 'bash bash/reload'
+
+  deploy:
+    - deploy:prepare
+    - deploy:vendors
+    - artisan:storage:link
+    - artisan:view:cache
+    - artisan:config:cache
+    - artisan:event:cache
+    - artisan:migrate
+    - frankenphp:release
+    - deploy:symlink
+    - frankenphp:up
+    - artisan:queue:restart
+    - deploy:unlock
+    - deploy:cleanup
+    - deploy:success
+
+after:
+  deploy:failed: deploy:unlock
+  rollback: frankenphp:reload

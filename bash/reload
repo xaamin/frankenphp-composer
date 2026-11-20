@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+
+# Gracefully reloads FrankenPHP without restarting the container: requests in
+# flight finish and new ones use the reloaded config.
+#
+#   bash bash/reload [<release_path>]
+#
+# Deployer mode (compose -d): points the server to <release_path> (default: the
+# project this script belongs to), using its real path, so run it from the new release
+# *before* deploy:symlink. Local mode: reloads the project's Caddyfile.
+
+set -euo pipefail
+
+TARGET="${1:-$(dirname "${BASH_SOURCE[0]}")/..}"
+
+if [ ! -d "$TARGET" ]; then
+  echo "👻 Error: Directory not found: $TARGET"
+  exit 1
+fi
+
+COMPOSE_FILE="$TARGET/docker-compose.yml"
+
+if [ ! -f "$COMPOSE_FILE" ]; then
+  echo "👻 Error: $COMPOSE_FILE not found. Run compose first."
+  exit 1
+fi
+
+NAME=$(sed -n -E 's/^[[:space:]]*container_name:[[:space:]]*"?([^"]+)"?[[:space:]]*$/\1/p' "$COMPOSE_FILE" | head -n 1)
+
+if [ "$(docker inspect -f '{{.State.Running}}' "$NAME" 2> /dev/null)" != "true" ]; then
+  echo "⚠️  Container ${NAME} is not running, nothing to reload. Start it with: docker compose up -d"
+  exit 0
+fi
+
+# Values the container was started with
+container_env() {
+  docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$NAME" | sed -n "s/^$1=//p"
+}
+
+DATA_VOLUME=$(container_env DATA_VOLUME)
+CURRENT_ROOT=$(container_env APP_ROOT)
+
+if [ "$CURRENT_ROOT" = "$DATA_VOLUME" ]; then
+  # Local mode: the project folder is served as is
+  APP_ROOT="$CURRENT_ROOT"
+else
+  # Deployer mode: use the release's real path, not the `release`/`current` symlinks
+  APP_ROOT=$(cd "$TARGET" && pwd -P)
+
+  if [[ "$APP_ROOT" != "$DATA_VOLUME"/* ]]; then
+    echo "👻 Error: ${APP_ROOT} is not inside the deploy path mounted in the container (${DATA_VOLUME})."
+    exit 1
+  fi
+fi
+
+if ! OUTPUT=$(docker exec -e APP_ROOT="$APP_ROOT" "$NAME" \
+  frankenphp reload --config "$APP_ROOT/Caddyfile" --adapter caddyfile --force 2>&1); then
+  echo "$OUTPUT"
+  echo "👻 Error: Reload failed, ${NAME} keeps serving the previous configuration."
+  exit 1
+fi
+
+echo "🔄 ${NAME} reloaded, serving ${APP_ROOT}/public"

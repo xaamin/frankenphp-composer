@@ -1,3 +1,8 @@
+#!/usr/bin/env bash
+
+# Work from the project root (the parent of bash/), wherever this is run from
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
+
 NAME=""
 DATA_VOLUME="$(pwd)"
 HOST_UID=$(id -u)
@@ -5,10 +10,11 @@ HOST_GID=$(id -g)
 SERVER_NAME=""
 SERVER_PORT=""
 AUTO_TLS=""
+DEPLOY_PATH=""
 
 # Ayuda del script
 function help {
-  echo "Usage: $0 -n <name> [-u <uid>] [-g <gid>] [-s <server> [-a]] [-p <port>] [-v]"
+  echo "Usage: $0 -n <name> [-u <uid>] [-g <gid>] [-s <server> [-a]] [-p <port>] [-d <deploy_path>] [-v]"
   exit 1
 }
 
@@ -52,6 +58,10 @@ while [[ $# -gt 0 ]]; do
       AUTO_TLS=1
       shift
       ;;
+    -d|--deploy-path)
+      DEPLOY_PATH="$2"
+      shift 2
+      ;;
     -v|--verbose)
       VERBOSE=1
       shift
@@ -65,8 +75,30 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Deployer mode (-d): the whole deploy path is mounted and the app is served from
+# <deploy_path>/current, so new releases go live with `bash bash/reload` without
+# recreating the container. Every path in the generated docker-compose.yml must
+# be the same for all releases, otherwise `docker compose up` recreates it.
+if [ -n "$DEPLOY_PATH" ]; then
+  if [ ! -d "$DEPLOY_PATH" ]; then
+    echo "👻 Error: Deploy path not found: $DEPLOY_PATH"
+    help
+  fi
+
+  DEPLOY_PATH=$(cd "$DEPLOY_PATH" && pwd -P)
+  DATA_VOLUME="$DEPLOY_PATH"
+  APP_ROOT="$DEPLOY_PATH/current"
+  CADDY_DIR="$DEPLOY_PATH/shared/.caddy"
+  BUILD_DIR="$DEPLOY_PATH/shared/.frankenphp"
+else
+  APP_ROOT="$DATA_VOLUME"
+  CADDY_DIR=".caddy"
+  BUILD_DIR="."
+fi
+
 export NAME
 export DATA_VOLUME
+export APP_ROOT
 export FILE
 export HOST_UID
 export HOST_GID
@@ -82,6 +114,29 @@ fi
 export PHP_VERSION="${PHP_VERSION:-}"
 
 verbose "💡 Using PHP version ${PHP_VERSION:-latest}."
+
+# Render the Dockerfile from its template with the FrankenPHP image for that PHP version
+FRANKENPHP_TAG="1${PHP_VERSION:+-php${PHP_VERSION}}"
+
+if [ ! -f Dockerfile.template ]; then
+  echo "👻 Error: Dockerfile.template not found. Run bash/dockerize to download it."
+  exit 1
+fi
+
+# Comment lines are left untouched, so the template's own docs keep the placeholder name
+sed "/^[[:space:]]*#/!s|{{FRANKENPHP_TAG}}|${FRANKENPHP_TAG}|g" Dockerfile.template > Dockerfile
+
+# Image tag = Dockerfile checksum, so unchanged Dockerfiles reuse the existing image
+IMAGE_TAG="df-$(cksum < Dockerfile | cut -d' ' -f1)"
+export IMAGE_TAG
+
+if [ -n "$DEPLOY_PATH" ]; then
+  # Stable build context shared by all releases
+  mkdir -p "$BUILD_DIR"
+  cp Dockerfile "$BUILD_DIR/Dockerfile"
+fi
+
+verbose "💡 Dockerfile generated from Dockerfile.template using dunglas/frankenphp:${FRANKENPHP_TAG}."
 
 if [ -z "$SERVER_NAME" ] && [ -z "$SERVER_PORT" ]; then
   echo "👻 Error: Param -s/--server or -p/--port is required to configure the server. $@"
@@ -118,7 +173,7 @@ fi
 export COMPOSE_PROJECT_NAME
 
 # Create the folders Caddy mounts so they belong to the host user (Docker would create them as root on Linux)
-mkdir -p .caddy/certs .caddy/data .caddy/config
+mkdir -p "$CADDY_DIR/certs" "$CADDY_DIR/data" "$CADDY_DIR/config"
 
 CADDY_FILE="Caddyfile"
 
@@ -141,7 +196,7 @@ if [ -n "$SERVER_PORT" ] || [ -n "$AUTO_TLS" ]; then
       TLS_MODE="auto (certificate issued by Caddy's local CA)"
 
       echo "🔒 Using auto TLS: Caddy will issue the certificate for ${SERVER_NAME} from its local CA."
-      echo "   Trust .caddy/data/caddy/pki/authorities/local/root.crt on this machine to avoid browser warnings (see README)."
+      echo "   Trust ${CADDY_DIR}/data/caddy/pki/authorities/local/root.crt on this machine to avoid browser warnings (see README)."
     else
       TLS_MODE="auto (certificate issued and renewed by Caddy)"
 
@@ -152,11 +207,11 @@ else
   # Uncomment the tls line to serve your own certificate files
   sed "${SED_INPLACE[@]}" -E 's|^([[:space:]]*)#[[:space:]]*(tls[[:space:]].*)$|\1\2|' "$CADDY_FILE"
 
-  TLS_MODE="custom (.caddy/certs/${NAME}.pem and ${NAME}-key.pem)"
+  TLS_MODE="custom (${CADDY_DIR}/certs/${NAME}.pem and ${NAME}-key.pem)"
 
-  echo "🔒 Using custom TLS: .caddy/certs/${NAME}.pem and .caddy/certs/${NAME}-key.pem."
+  echo "🔒 Using custom TLS: ${CADDY_DIR}/certs/${NAME}.pem and ${CADDY_DIR}/certs/${NAME}-key.pem."
 
-  if [ ! -f ".caddy/certs/${NAME}.pem" ] || [ ! -f ".caddy/certs/${NAME}-key.pem" ]; then
+  if [ ! -f "${CADDY_DIR}/certs/${NAME}.pem" ] || [ ! -f "${CADDY_DIR}/certs/${NAME}-key.pem" ]; then
     echo "⚠️  Certificate files not found. Copy your certificate and private key there before starting the container."
   fi
 fi
@@ -167,30 +222,56 @@ if [ -z "$SERVER_NAME" ] && [ -n "$SERVER_PORT" ]; then
   SERVER_NAME=":${SERVER_PORT}"
 fi
 
-COMPOSE_FILES=(-f docker-compose.t.yml)
+COMPOSE_FILES=(-f docker-compose.template.yml)
 
-if [ -n "$SERVER_PORT" ]; then
-  PORT_OVERRIDE_FILE=$(mktemp)
+if [ -n "$SERVER_PORT" ] || [ -n "$DEPLOY_PATH" ]; then
+  OVERRIDE_FILE=$(mktemp)
 
-  trap 'rm -f "$PORT_OVERRIDE_FILE"' EXIT
+  trap 'rm -f "$OVERRIDE_FILE"' EXIT
 
   printf '%s\n' \
     'services:' \
-    '  php:' \
-    '    ports: !override' \
-    "      - \"${SERVER_PORT}:${SERVER_PORT}\"" \
-    "      - \"${SERVER_PORT}:${SERVER_PORT}/udp\"" > "$PORT_OVERRIDE_FILE"
+    '  php:' > "$OVERRIDE_FILE"
 
-  COMPOSE_FILES+=(-f "$PORT_OVERRIDE_FILE")
+  if [ -n "$SERVER_PORT" ]; then
+    printf '%s\n' \
+      '    ports: !override' \
+      "      - \"${SERVER_PORT}:${SERVER_PORT}\"" \
+      "      - \"${SERVER_PORT}:${SERVER_PORT}/udp\"" >> "$OVERRIDE_FILE"
+  fi
 
-  verbose "💡 Docker Compose override file created at: $PORT_OVERRIDE_FILE"
+  if [ -n "$DEPLOY_PATH" ]; then
+    # Only stable paths: the deploy path, the shared dir and the `current` symlink.
+    # Caddy reads the Caddyfile of the current release; `bash bash/reload` switches it.
+    printf '%s\n' \
+      '    build: !override' \
+      "      context: \"${BUILD_DIR}\"" \
+      '      dockerfile: Dockerfile' \
+      "    working_dir: \"${APP_ROOT}\"" \
+      "    command: [\"frankenphp\", \"run\", \"--config\", \"${APP_ROOT}/Caddyfile\", \"--adapter\", \"caddyfile\"]" \
+      '    volumes: !override' \
+      "      - \"${DEPLOY_PATH}:${DEPLOY_PATH}\"" \
+      "      - \"${CADDY_DIR}/data:/data\"" \
+      "      - \"${CADDY_DIR}/config:/config\"" \
+      "      - \"${CADDY_DIR}/certs:/etc/caddy/certs:ro\"" >> "$OVERRIDE_FILE"
+  fi
+
+  COMPOSE_FILES+=(-f "$OVERRIDE_FILE")
+
+  verbose "💡 Docker Compose override file created at: $OVERRIDE_FILE"
 fi
 
 echo "👀 Config:"
 echo "  Project name: $COMPOSE_PROJECT_NAME"
 echo "  Container name: $NAME"
 echo "  PHP version: ${PHP_VERSION:-latest}"
+echo "  Base image: dunglas/frankenphp:${FRANKENPHP_TAG}"
+echo "  Image: ${COMPOSE_PROJECT_NAME}-php:${IMAGE_TAG}"
 echo "  Data volume: $DATA_VOLUME"
+echo "  App root: $APP_ROOT"
+if [ -n "$DEPLOY_PATH" ]; then
+  echo "  Deploy mode: Deployer releases in $DEPLOY_PATH (shared state in $DEPLOY_PATH/shared)"
+fi
 echo "  UID: $HOST_UID"
 echo "  GID: $HOST_GID"
 echo "  Domain name: $SERVER_NAME"
@@ -200,4 +281,9 @@ echo "  TLS: $TLS_MODE"
 docker compose "${COMPOSE_FILES[@]}" config > docker-compose.yml
 
 echo ""
-echo "🌐 To start the container, run: docker compose up -d"
+if [ -n "$DEPLOY_PATH" ]; then
+  echo "🌐 Switch the running container to this release with: bash bash/reload"
+  echo "   Then, after deploy:symlink: docker compose up -d (starts it the first time, rebuilds only if the Dockerfile changed)"
+else
+  echo "🌐 To start the container, run: docker compose up -d (it builds the image when the Dockerfile changes)"
+fi

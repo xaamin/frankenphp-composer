@@ -1,0 +1,77 @@
+#!/bin/bash
+
+# Downloads the frankenphp-composer files into the current project.
+# Re-run it to update them to the latest version.
+
+set -euo pipefail
+
+BASE_URL="https://raw.githubusercontent.com/xaamin/frankenphp-composer/refs/heads/master"
+
+FILES=(
+  .caddy/.gitignore
+  Caddyfile
+  Dockerfile.template
+  docker-compose.template.yml
+  bash/compose
+  bash/reload
+)
+
+# Work from the project root (the parent of bash/), wherever this is run from
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+mkdir -p ./.caddy ./bash
+
+for FILE in "${FILES[@]}"; do
+  if ! curl -fsSL "${BASE_URL}/${FILE}" -o "./${FILE}"; then
+    echo "👻 Error: Could not download ${FILE}."
+    exit 1
+  fi
+done
+
+echo "✅ Compose files downloaded."
+
+chmod +x ./bash/compose ./bash/reload
+
+# Sample Deployer config: only created when the project doesn't have a deploy.yml yet,
+# so an existing one (with your hosts and tasks) is never overwritten.
+if [ -f deploy.yml ]; then
+  echo "💡 deploy.yml already exists, left untouched. See ${BASE_URL}/deploy.template.yml for the FrankenPHP tasks."
+elif curl -fsSL "${BASE_URL}/deploy.template.yml" -o deploy.yml; then
+  echo "📝 deploy.yml created from the Deployer template: replace its <placeholders> before deploying."
+else
+  rm -f deploy.yml
+  echo "👻 Error: Could not download deploy.template.yml."
+  exit 1
+fi
+
+# Files from older versions that are no longer used (old name:new name)
+LEGACY_FILES=(
+  docker-compose.t.yml:docker-compose.template.yml
+  Dockerfile.t:Dockerfile.template
+  compose:bash/compose
+  reload:bash/reload
+  dockerize:bash/dockerize
+)
+
+for LEGACY in "${LEGACY_FILES[@]}"; do
+  if [ -f "${LEGACY%%:*}" ]; then
+    echo "⚠️  ${LEGACY%%:*} is no longer used (replaced by ${LEGACY#*:}). Move any custom changes there and delete it."
+  fi
+done
+echo ""
+echo "🌐 Usage:"
+echo "  Local development (HTTPS, certificate issued by Caddy):"
+echo "      bash bash/compose -n myapp -s myapp.localhost -a"
+echo "  Public domain (HTTPS, certificate issued and renewed by Caddy):"
+echo "      bash bash/compose -n myapp -s example.com -a"
+echo "  Your own certificate (.caddy/certs/myapp.pem and myapp-key.pem):"
+echo "      bash bash/compose -n myapp -s example.com"
+echo "  Behind a reverse proxy (plain HTTP on a port):"
+echo "      bash bash/compose -n myapp -p 8080"
+echo ""
+echo "💡 Replace the domain, port and container name (-n) with your own."
+echo "💡 Set PHP_VERSION in .env to pin a PHP version (default: latest)."
+echo "💡 Add PHP extensions or packages in Dockerfile.template; compose renders Dockerfile from it."
+echo "  Deployer releases without downtime (see README):"
+echo "      bash bash/compose -n myapp -p 8080 -d /path/to/deploy && bash bash/reload"
+echo "🌐 Then start the container with: docker compose up -d (builds the image when the Dockerfile changes)"
