@@ -18,6 +18,13 @@ function verbose {
   fi
 }
 
+# Read a variable from the project's .env file (last definition wins, quotes stripped)
+function env_value {
+  if [ -f .env ]; then
+    grep -E "^[[:space:]]*$1[[:space:]]*=" .env | tail -n 1 | cut -d= -f2- | tr -d "\"' \r"
+  fi
+}
+
 # Parse params
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -68,8 +75,8 @@ export SERVER_PORT
 
 # PHP version: shell environment first, then the project's .env file.
 # Empty means the latest PHP version shipped by FrankenPHP.
-if [ -z "$PHP_VERSION" ] && [ -f .env ]; then
-  PHP_VERSION=$(grep -E '^[[:space:]]*PHP_VERSION[[:space:]]*=' .env | tail -n 1 | cut -d= -f2- | tr -d "\"' \r")
+if [ -z "$PHP_VERSION" ]; then
+  PHP_VERSION=$(env_value PHP_VERSION)
 fi
 
 export PHP_VERSION="${PHP_VERSION:-}"
@@ -95,6 +102,23 @@ if [ -z "$NAME" ]; then
   echo "👻 Error: Param -n/--name is required to manage the container name. $@"
   help
 fi
+
+# Docker Compose project name: shell environment first, then the project's .env file,
+# then the container name normalized to lowercase letters, digits and "-".
+if [ -z "$COMPOSE_PROJECT_NAME" ]; then
+  COMPOSE_PROJECT_NAME=$(env_value COMPOSE_PROJECT_NAME)
+fi
+
+if [ -z "$COMPOSE_PROJECT_NAME" ]; then
+  COMPOSE_PROJECT_NAME=$(echo "$NAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g; s/-+/-/g; s/^-+//; s/-+$//')
+
+  verbose "💡 COMPOSE_PROJECT_NAME not set, using the container name as project name: ${COMPOSE_PROJECT_NAME}."
+fi
+
+export COMPOSE_PROJECT_NAME
+
+# Create the folders Caddy mounts so they belong to the host user (Docker would create them as root on Linux)
+mkdir -p .caddy/certs .caddy/data .caddy/config
 
 CADDY_FILE="Caddyfile"
 
@@ -125,15 +149,16 @@ if [ -n "$SERVER_PORT" ] || [ -n "$AUTO_TLS" ]; then
     fi
   fi
 else
-  # Uncomment the tls line and generate a locally trusted certificate
+  # Uncomment the tls line to serve your own certificate files
   sed "${SED_INPLACE[@]}" -E 's|^([[:space:]]*)#[[:space:]]*(tls[[:space:]].*)$|\1\2|' "$CADDY_FILE"
 
   TLS_MODE="custom (.caddy/certs/${NAME}.pem and ${NAME}-key.pem)"
 
   echo "🔒 Using custom TLS: .caddy/certs/${NAME}.pem and .caddy/certs/${NAME}-key.pem."
-  echo "   A locally trusted certificate is generated now; replace both files to use a purchased one."
 
-  bash ./.caddy/generate-ssl-cert
+  if [ ! -f ".caddy/certs/${NAME}.pem" ] || [ ! -f ".caddy/certs/${NAME}-key.pem" ]; then
+    echo "⚠️  Certificate files not found. Copy your certificate and private key there before starting the container."
+  fi
 fi
 
 if [ -z "$SERVER_NAME" ] && [ -n "$SERVER_PORT" ]; then
@@ -162,6 +187,7 @@ if [ -n "$SERVER_PORT" ]; then
 fi
 
 echo "👀 Config:"
+echo "  Project name: $COMPOSE_PROJECT_NAME"
 echo "  Container name: $NAME"
 echo "  PHP version: ${PHP_VERSION:-latest}"
 echo "  Data volume: $DATA_VOLUME"
