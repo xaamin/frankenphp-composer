@@ -164,6 +164,30 @@ tls /etc/caddy/certs/{$NAME}.pem /etc/caddy/certs/{$NAME}-key.pem
 
 TLS is disabled in the `Caddyfile`, and the container listens only on the given port. Use this when another proxy terminates TLS in front of it. Caddy trusts proxies on private network ranges (the Docker network or LAN), so its own logs and matchers use the client IP they forward. PHP still sees the proxy as `REMOTE_ADDR` and no `HTTPS` flag. The original values arrive as `X-Forwarded-For` and `X-Forwarded-Proto` headers, so configure your framework to trust them (for example, Laravel's `TrustProxies` middleware).
 
+## Connecting to services on the host
+
+Inside the container, `127.0.0.1` is the container itself, not your machine. To reach a database or another service running on the host, use `host.docker.internal`:
+
+```env
+DB_HOST=host.docker.internal
+```
+
+Docker Desktop and Rancher Desktop (macOS, Windows) already define that name. On Linux, `compose` adds `extra_hosts: host.docker.internal:host-gateway` to the generated `docker-compose.yml`, which points it at the host's Docker bridge IP (usually `172.17.0.1`). Check it with:
+
+```bash
+docker exec -it myapp getent hosts host.docker.internal
+```
+
+On a Linux host, the service must also accept connections from the container. For MySQL/MariaDB:
+
+- **Listen on the bridge**, not only on loopback: set `bind-address = 0.0.0.0` (or `127.0.0.1,172.17.0.1` on MySQL ≥ 8.0.13) and restart the service.
+- **Grant access from the Docker networks.** The container connects from an address like `172.18.0.x`, not `localhost`:
+  ```sql
+  CREATE USER 'myapp'@'172.%' IDENTIFIED BY '...';
+  GRANT ALL ON myapp.* TO 'myapp'@'172.%';
+  ```
+- **Open the firewall** to those networks, e.g. with `ufw`: `sudo ufw allow from 172.16.0.0/12 to any port 3306 proto tcp`.
+
 ## Deploying with Deployer
 
 [Deployer](https://deployer.org) puts each deploy in a new `releases/N` folder and then points the `current` symlink at it. A container that mounts the project folder would keep serving the old release until it's recreated, which means a few seconds of downtime on every deploy. Deployer mode (`-d <deploy_path>`) avoids that:

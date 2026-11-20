@@ -224,7 +224,15 @@ fi
 
 COMPOSE_FILES=(-f docker-compose.template.yml)
 
-if [ -n "$SERVER_PORT" ] || [ -n "$DEPLOY_PATH" ]; then
+# Docker Desktop and Rancher Desktop already resolve host.docker.internal to the
+# host machine; overriding it there breaks it. Plain Docker on Linux needs it, or
+# the name falls back to the host's DNS (e.g. a 127.0.0.1 entry in /etc/hosts).
+ADD_HOST_GATEWAY=""
+if [[ "$OSTYPE" == linux* ]]; then
+  ADD_HOST_GATEWAY=1
+fi
+
+if [ -n "$SERVER_PORT" ] || [ -n "$DEPLOY_PATH" ] || [ -n "$ADD_HOST_GATEWAY" ]; then
   OVERRIDE_FILE=$(mktemp)
 
   trap 'rm -f "$OVERRIDE_FILE"' EXIT
@@ -232,6 +240,12 @@ if [ -n "$SERVER_PORT" ] || [ -n "$DEPLOY_PATH" ]; then
   printf '%s\n' \
     'services:' \
     '  php:' > "$OVERRIDE_FILE"
+
+  if [ -n "$ADD_HOST_GATEWAY" ]; then
+    printf '%s\n' \
+      '    extra_hosts:' \
+      '      - "host.docker.internal:host-gateway"' >> "$OVERRIDE_FILE"
+  fi
 
   if [ -n "$SERVER_PORT" ]; then
     printf '%s\n' \
