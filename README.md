@@ -6,21 +6,17 @@ Generates a `docker-compose.yml` that serves a PHP app with [FrankenPHP](https:/
 
 - Docker with the Compose plugin
 - Bash
-- Only for your own certificate (`-s` without `-a`): Homebrew on macOS, or `apt` and `sudo` on Linux. These are used to install the local certificate tooling the first time it's needed.
 
 ## Installation
 
-Copy these files into the root of your PHP project, keeping the same paths:
+From the root of your PHP project, download and run the `dockerize` script:
 
-```
-.caddy/.gitignore
-.caddy/generate-ssl-cert
-Caddyfile
-compose
-docker-compose.t.yml
+```bash
+curl -fsSL https://raw.githubusercontent.com/xaamin/frankenphp-composer/refs/heads/master/dockerize -o dockerize
+bash dockerize
 ```
 
-Each file can be downloaded from `https://raw.githubusercontent.com/xaamin/frankenphp-composer/refs/heads/master/<path>`.
+It downloads `.caddy/.gitignore`, `Caddyfile`, `compose` and `docker-compose.t.yml` into the project and prints the usage examples. Keep `dockerize` in your project and re-run it to update those files to the latest version. It overwrites them, including any manual edits to `Caddyfile`. Requires `curl`.
 
 ## Usage
 
@@ -61,14 +57,14 @@ You must pass exactly one of `-s` or `-p`. `-a` only works together with `-s`.
 | --- | --- | --- | --- |
 | Local development | `-s myapp.localhost -a` | Issued by Caddy's local CA | 80, 443 |
 | Public server | `-s example.com -a` | Issued and renewed by Caddy (Let's Encrypt/ZeroSSL) | 80, 443 |
-| Your own or purchased certificate | `-s example.com` | Files in `.caddy/certs/` | 80, 443 |
+| Your own certificate (e.g. purchased) | `-s example.com` | Files in `.caddy/certs/` | 80, 443 |
 | Behind another reverse proxy | `-p 8080` | None, plain HTTP | the given port |
 
 `compose` prints the TLS mode it picked (🔒 auto, 🔒 custom or 🔓 disabled) along with a config summary. The HTTPS modes bind host ports 80 and 443, so they fail to start if something else is already using those ports. In that case, stop the other service or use port mode behind it.
 
 ### PHP version
 
-By default the latest PHP version is used. To pin a specific version, set `PHP_VERSION` in your project's `.env` file:
+By default the latest PHP version is used. To pin a specific version, set `PHP_VERSION` in your project's `.env` file (see [`.env.example`](.env.example)):
 
 ```dotenv
 PHP_VERSION=8.5
@@ -88,6 +84,16 @@ PHP_VERSION=8.5
   docker compose pull
   docker compose up -d
   ```
+
+### Project name
+
+Docker Compose groups the container under a project name, shown in `docker compose ls` and Docker Desktop. By default `compose` uses the container name given with `-n`, lowercased, with anything other than letters, digits and `-` (including `_` and `.`) replaced by `-` (for example, `-n My.Shop_API` becomes `my-shop-api`). To use a different name, set `COMPOSE_PROJECT_NAME` in `.env` (see [`.env.example`](.env.example)) and re-run `compose`. A value set in your shell takes precedence over `.env`.
+
+```dotenv
+COMPOSE_PROJECT_NAME=myapp
+```
+
+If the container is already running, stop it with `docker compose down` **before** changing the name. Otherwise the next `docker compose up -d` treats it as a new project and fails, because a container with the `-n` name already exists.
 
 ### Local development with `.localhost` (`-s` with `-a`)
 
@@ -122,21 +128,17 @@ Certificates are stored in `.caddy/data`, so they survive container restarts.
 
 ### Your own certificate (`-s` without `-a`)
 
-Without `-a`, `compose` enables the `tls` line in the `Caddyfile` and generates a locally trusted certificate in `.caddy/certs/`. The domain must resolve to your machine: `.localhost` domains always do, others need an entry in `/etc/hosts`. To use a purchased certificate instead, replace those files as described below.
-
-### Using a purchased certificate
-
-If you bought a certificate for your domain, uncomment the `tls` line in `Caddyfile` so Caddy serves it:
+Use this when you have certificate files for the domain, for example a purchased certificate. `compose` uncomments the `tls` line in the `Caddyfile` so Caddy serves those files:
 
 ```
 tls /etc/caddy/certs/{$NAME}.pem /etc/caddy/certs/{$NAME}-key.pem
 ```
 
-1. Run `compose` in HTTPS mode, e.g. `bash compose -n myapp -s example.com`. This uncomments the `tls` line for you.
-2. **After** running `compose`, copy your certificate to `.caddy/certs/myapp.pem` and its private key to `.caddy/certs/myapp-key.pem`. The file names must match the `-n` container name. Use the full chain (your certificate followed by the intermediate certificates) in the `.pem` file.
+1. Run `compose`, e.g. `bash compose -n myapp -s example.com`.
+2. Copy your certificate to `.caddy/certs/myapp.pem` and its private key to `.caddy/certs/myapp-key.pem`. The file names must match the `-n` container name. Use the full chain (your certificate followed by the intermediate certificates) in the `.pem` file.
 3. Start or restart the container with `docker compose up -d`.
 
-Running `compose -s` again regenerates the local certificate under the same file names, so copy your purchased files back in afterwards.
+`compose` never creates or overwrites these files; it warns if they're missing. The domain must resolve to the machine running the container.
 
 ### Port mode (`-p`)
 
